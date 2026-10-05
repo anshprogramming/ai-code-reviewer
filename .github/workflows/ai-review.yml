@@ -1,4 +1,4 @@
-name: AI Code Review Agent
+name: AI Code Review
 
 on:
   pull_request:
@@ -6,31 +6,72 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write # Required to post comments
+  pull-requests: write
 
 jobs:
-  ai-review:
+  review:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Required for git diff to work properly
+          fetch-depth: 0
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: Install deps
+        run: pip install groq PyGithub
 
-      - name: Run AI Code Review
+      - name: Run AI Review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: python scripts/review.py
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          python << 'EOF'
+          import os, subprocess
+          from groq import Groq
+          from github import Github
+          
+          groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
+          gh = Github(os.getenv("GITHUB_TOKEN"))
+          
+          base_ref = os.getenv("BASE_REF", "main")
+          pr_num = os.getenv("PR_NUMBER")
+          
+          # Fetch the base branch (e.g., main) to compare against
+          subprocess.run(["git", "fetch", "origin", base_ref], check=True)
+          
+          # Get the diff between the base branch and the current HEAD (the PR code)
+          diff_result = subprocess.run(
+              ["git", "diff", f"origin/{base_ref}...HEAD"], 
+              capture_output=True, text=True
+          )
+          diff = diff_result.stdout[:10000]
+          
+          if not diff.strip():
+              print("No changes found or diff is empty.")
+              exit(0)
+          
+          print(f"Diff length: {len(diff)} chars")
+          
+          # AI Review
+          response = groq.chat.completions.create(
+              model="llama3-70b-8192",
+              messages=[
+                  {"role": "system", "content": "You are a code reviewer. Find security issues, performance problems, and code quality issues. Be concise. Format: **Issue**: description, **Fix**: suggestion"},
+                  {"role": "user", "content": f"Review this diff:\n```diff\n{diff}\n```"}
+              ],
+              temperature=0.2
+          )
+          
+          # Post comment
+          repo = gh.get_repo(os.getenv("REPO"))
+          pr = repo.get_pull(int(pr_num))
+          pr.create_issue_comment(f"## 🤖 AI Review\n\n{response.choices[0].message.content}")
+          print("✅ Review posted!")
+          EOF
