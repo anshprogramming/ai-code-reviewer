@@ -61,7 +61,7 @@ jobs:
           
           # AI Review
           response = groq.chat.completions.create(
-              model="llama-3.3-70b-versatile",
+              model="llama-3.1-70b-versatile",
               messages=[
                   {"role": "system", "content": "You are a code reviewer. Find security issues, performance problems, and code quality issues. Be concise. Format: **Issue**: description, **Fix**: suggestion"},
                   {"role": "user", "content": f"Review this diff:\n```diff\n{diff}\n```"}
